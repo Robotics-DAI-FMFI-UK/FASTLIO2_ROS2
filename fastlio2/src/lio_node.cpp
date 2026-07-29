@@ -7,7 +7,11 @@
 // #include <filesystem>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
-#include <livox_ros_driver2/msg/custom_msg.hpp>
+
+//******************** PALO
+// #include <livox_ros_driver2/msg/custom_msg.hpp>
+
+//********************
 
 #include "utils.h"
 #include "map_builder/commons.h"
@@ -51,7 +55,20 @@ public:
         loadParameters();
 
         m_imu_sub = this->create_subscription<sensor_msgs::msg::Imu>(m_node_config.imu_topic, 10, std::bind(&LIONode::imuCB, this, std::placeholders::_1));
-        m_lidar_sub = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(m_node_config.lidar_topic, 10, std::bind(&LIONode::lidarCB, this, std::placeholders::_1));
+
+	//********************* PALO
+        //m_lidar_sub = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(m_node_config.lidar_topic, 10, std::bind(&LIONode::lidarCB, this, std::placeholders::_1));
+	
+	m_lidar_sub =
+    this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        m_node_config.lidar_topic,
+        10,
+        std::bind(
+            &LIONode::lidarCB,
+            this,
+            std::placeholders::_1));
+
+	//*********************
 
         m_body_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("body_cloud", 10000);
         m_world_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("world_cloud", 10000);
@@ -127,6 +144,8 @@ public:
                                              timestamp);
         m_state_data.last_imu_time = timestamp;
     }
+    //************************* PALO
+    /*
     void lidarCB(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg)
     {
         CloudType::Ptr cloud = Utils::livox2PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range);
@@ -140,6 +159,40 @@ public:
         m_state_data.lidar_buffer.emplace_back(timestamp, cloud);
         m_state_data.last_lidar_time = timestamp;
     }
+    */
+    void lidarCB(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+    {
+        CloudType::Ptr cloud = Utils::pointCloud2ToPCL(
+            msg,
+            m_builder_config.lidar_filter_num,
+            m_builder_config.lidar_min_range,
+            m_builder_config.lidar_max_range);
+    
+        if (cloud->empty())
+        {
+            RCLCPP_WARN(this->get_logger(), "Received empty LiDAR cloud");
+            return;
+        }
+    
+        std::lock_guard<std::mutex> lock(m_state_data.lidar_mutex);
+        double timestamp = Utils::getSec(msg->header);
+    
+        if (timestamp < m_state_data.last_lidar_time)
+        {
+            RCLCPP_WARN(this->get_logger(),
+                        "Lidar Message is out of order");
+    
+            std::deque<std::pair<
+                double,
+                pcl::PointCloud<pcl::PointXYZINormal>::Ptr>>()
+                .swap(m_state_data.lidar_buffer);
+        }
+    
+        m_state_data.lidar_buffer.emplace_back(timestamp, cloud);
+        m_state_data.last_lidar_time = timestamp;
+    }
+
+    //*************
 
     bool syncPackage()
     {
@@ -273,7 +326,11 @@ public:
     }
 
 private:
-    rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr m_lidar_sub;
+    //********** PALO
+    //rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr m_lidar_sub;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr m_lidar_sub;
+    //********** 
+
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr m_imu_sub;
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_body_cloud_pub;

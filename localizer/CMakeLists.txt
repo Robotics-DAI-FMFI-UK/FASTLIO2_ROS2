@@ -23,6 +23,7 @@ find_package(message_filters REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(interface REQUIRED)
 find_package(pcl_conversions REQUIRED)
+find_package(rclcpp REQUIRED)
 
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
@@ -40,11 +41,15 @@ set(SRC_LIST src/localizers/commons.cpp
              src/localizers/icp_localizer.cpp)
 
 add_executable(localizer_node src/localizer_node.cpp ${SRC_LIST})
+add_executable(localization_monitor src/localization_monitor.cpp)
+
 ament_target_dependencies(localizer_node rclcpp std_msgs sensor_msgs nav_msgs message_filters pcl_conversions tf2_ros geometry_msgs interface)
+ament_target_dependencies(localization_monitor rclcpp nav_msgs std_msgs interface)
+
 target_link_libraries(localizer_node ${PCL_LIBRARIES}  yaml-cpp) 
 
 
-install(TARGETS localizer_node DESTINATION lib/${PROJECT_NAME})
+install(TARGETS localizer_node localization_monitor DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})

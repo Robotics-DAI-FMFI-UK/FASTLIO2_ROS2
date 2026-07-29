@@ -28,7 +28,10 @@ find_package(visualization_msgs REQUIRED)
 
 find_package(GTSAM REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED)
+# ********************* PALO
+# find_package(PCL REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common io filters kdtree registration)
+# *********************
 find_package(interface REQUIRED)
 find_package(yaml-cpp REQUIRED)
 

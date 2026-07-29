@@ -88,6 +88,10 @@ public:
         }
 
         std::filesystem::path p_dir(request->maps_path);
+	//******** PALO
+	m_maps_path = request->maps_path;
+	//********
+
         std::filesystem::path pcd_dir = p_dir / "patches";
         if (!std::filesystem::exists(pcd_dir))
         {
@@ -177,6 +181,35 @@ public:
                 RCLCPP_INFO(this->get_logger(), "======HBA ITER %lu END========", i + 1);
             }
 
+	    //*******  PALO
+	    pcl::PointCloud<pcl::PointXYZI>::Ptr refined_map = m_hba->getMapPoints();
+
+            m_voxel_grid.setInputCloud(refined_map);
+            m_voxel_grid.filter(*refined_map);
+            
+            std::filesystem::path output_path =
+                m_maps_path / "map_hba.pcd";
+            
+            int result = pcl::io::savePCDFileBinary(
+                output_path.string(),
+                *refined_map);
+            
+            if (result == 0)
+            {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "SAVED REFINED MAP TO %s",
+                    output_path.string().c_str());
+            }
+            else
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "FAILED TO SAVE REFINED MAP TO %s",
+                    output_path.string().c_str());
+            }
+	    //*******
+	    
             m_do_optimize = false;
             RCLCPP_WARN(this->get_logger(), "END OPTIMIZE");
         }
@@ -211,6 +244,10 @@ private:
     std::mutex m_service_mutex;
     bool m_do_optimize = false;
     rclcpp::TimerBase::SharedPtr m_timer;
+
+    //************ PALO
+    std::filesystem::path m_maps_path;
+    //************
 };
 
 int main(int argc, char **argv)

@@ -1,3 +1,4 @@
+#include <iostream>
 #include "icp_localizer.h"
 
 ICPLocalizer::ICPLocalizer(const ICPConfig &config) : m_config(config)
@@ -65,6 +66,8 @@ void ICPLocalizer::setInput(const CloudType::Ptr &cloud)
     }
 }
 
+//******************PALO
+/*
 bool ICPLocalizer::align(M4F &guess)
 {
     CloudType::Ptr aligned_cloud(new CloudType);
@@ -85,3 +88,75 @@ bool ICPLocalizer::align(M4F &guess)
     guess = m_refine_icp.getFinalTransformation();
     return true;
 }
+*/
+bool ICPLocalizer::align(M4F &guess)
+{
+    CloudType::Ptr aligned_cloud(new CloudType);
+
+    std::cerr
+        << "ICP input sizes: rough scan=" << m_rough_inp->size()
+        << ", rough map=" << m_rough_tgt->size()
+        << ", refine scan=" << m_refine_inp->size()
+        << ", refine map=" << m_refine_tgt->size()
+        << std::endl;
+
+    if (m_refine_tgt->empty() ||
+        m_rough_tgt->empty() ||
+        m_refine_inp->empty() ||
+        m_rough_inp->empty())
+    {
+        std::cerr << "ICP failed: empty input or map" << std::endl;
+        return false;
+    }
+
+    m_rough_icp.setMaximumIterations(
+        m_config.rough_max_iteration);
+    m_rough_icp.setInputSource(m_rough_inp);
+    m_rough_icp.setInputTarget(m_rough_tgt);
+    m_rough_icp.align(*aligned_cloud, guess);
+
+    std::cerr
+        << "Rough ICP: converged="
+        << m_rough_icp.hasConverged()
+        << ", score="
+        << m_rough_icp.getFitnessScore()
+        << ", threshold="
+        << m_config.rough_score_thresh
+        << std::endl;
+
+    if (!m_rough_icp.hasConverged() ||
+        m_rough_icp.getFitnessScore() >
+            m_config.rough_score_thresh)
+    {
+        return false;
+    }
+
+    m_refine_icp.setMaximumIterations(
+        m_config.refine_max_iteration);
+    m_refine_icp.setInputSource(m_refine_inp);
+    m_refine_icp.setInputTarget(m_refine_tgt);
+    m_refine_icp.align(
+        *aligned_cloud,
+        m_rough_icp.getFinalTransformation());
+
+    std::cerr
+        << "Refine ICP: converged="
+        << m_refine_icp.hasConverged()
+        << ", score="
+        << m_refine_icp.getFitnessScore()
+        << ", threshold="
+        << m_config.refine_score_thresh
+        << std::endl;
+
+    if (!m_refine_icp.hasConverged() ||
+        m_refine_icp.getFitnessScore() >
+            m_config.refine_score_thresh)
+    {
+        return false;
+    }
+
+    guess = m_refine_icp.getFinalTransformation();
+    std::cerr << "ICP localization accepted" << std::endl;
+    return true;
+}
+//********************

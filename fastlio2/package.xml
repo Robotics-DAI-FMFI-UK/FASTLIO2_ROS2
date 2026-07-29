@@ -16,7 +16,9 @@
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>pcl_conversions</depend>
+  <!-- ************** PALO 
   <depend>livox_ros_driver2</depend>
+       *************** -->
   <depend>geometry_msgs</depend>
   
 

@@ -1,5 +1,10 @@
-imu_topic: /livox/imu
-lidar_topic: /livox/lidar
+# ****************** PALO
+# imu_topic: /livox/imu
+# lidar_topic: /livox/lidar
+imu_topic: /utlidar/imu_livox_mid360
+lidar_topic: /utlidar/cloud_livox_mid360
+# ****************** 
+
 body_frame: body
 world_frame: lidar
 print_time_cost: false

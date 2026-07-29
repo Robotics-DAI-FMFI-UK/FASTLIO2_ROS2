@@ -1,4 +1,9 @@
 #include "utils.h"
+
+//******************** PALO
+#include <cmath>
+
+/*
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg, int filter_num, double min_range, double max_range)
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZINormal>);
@@ -25,6 +30,79 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driv
     }
     return cloud;
 }
+*/
+
+pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pointCloud2ToPCL(
+    const sensor_msgs::msg::PointCloud2::SharedPtr msg,
+    int filter_num,
+    double min_range,
+    double max_range)
+{
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(
+        new pcl::PointCloud<pcl::PointXYZINormal>);
+
+    const std::size_t point_num =
+        static_cast<std::size_t>(msg->width) * msg->height;
+
+    cloud->reserve(point_num / filter_num + 1);
+
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_intensity(
+        *msg, "intensity");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_time(*msg, "time");
+
+    const double min_range_squared = min_range * min_range;
+    const double max_range_squared = max_range * max_range;
+
+    for (std::size_t i = 0;
+         i < point_num;
+         ++i, ++iter_x, ++iter_y, ++iter_z,
+         ++iter_intensity, ++iter_time)
+    {
+        if (i % filter_num != 0)
+            continue;
+
+        const float x = *iter_x;
+        const float y = *iter_y;
+        const float z = *iter_z;
+
+        if (!std::isfinite(x) ||
+            !std::isfinite(y) ||
+            !std::isfinite(z) ||
+            !std::isfinite(*iter_time))
+        {
+            continue;
+        }
+
+        const double range_squared = x * x + y * y + z * z;
+
+        if (range_squared < min_range_squared ||
+            range_squared > max_range_squared)
+        {
+            continue;
+        }
+
+        pcl::PointXYZINormal point;
+        point.x = x;
+        point.y = y;
+        point.z = z;
+        point.intensity = *iter_intensity;
+
+	// Unitree's PointCloud2 "time" field is nanoseconds.
+        // FASTLIO2 stores the point offset in milliseconds in curvature.
+        point.curvature = *iter_time / 1000000.0f;
+
+        cloud->push_back(point);
+    }
+
+    return cloud;
+}
+
+//************************
+
+
 
 double Utils::getSec(std_msgs::msg::Header &header)
 {

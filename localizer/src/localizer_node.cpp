@@ -1,5 +1,9 @@
 #include <queue>
 #include <mutex>
+//*** PALO
+#include <atomic>
+#include <std_msgs/msg/bool.hpp>
+//***
 #include <filesystem>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -33,13 +37,24 @@ struct NodeState
 {
     std::mutex message_mutex;
     std::mutex service_mutex;
-
     bool message_received = false;
-    bool service_received = false;
-    bool localize_success = false;
+
+    //******************* PALO
+    //bool service_received = false;
+    //bool localize_success = false;
+    std::atomic_bool service_received{false};
+    std::atomic_bool localize_success{false};
+
+    std::atomic_bool tracking_valid{false};
+    int consecutive_icp_failures = 0;
+    rclcpp::Time last_icp_success_time;
+    //*****************
     rclcpp::Time last_send_tf_time = rclcpp::Clock().now();
     builtin_interfaces::msg::Time last_message_time;
-    CloudType::Ptr last_cloud = std::make_shared<CloudType>();
+    //************* PALO
+    //CloudType::Ptr last_cloud = std::make_shared<CloudType>();
+    CloudType::Ptr last_cloud = CloudType::Ptr(new CloudType);
+    //*************
     M3D last_r;                          // localmap_body_r
     V3D last_t;                          // localmap_body_t
     M3D last_offset_r = M3D::Identity(); // map_localmap_r
@@ -70,6 +85,10 @@ public:
         m_reloc_check_srv = this->create_service<interface::srv::IsValid>("relocalize_check", std::bind(&LocalizerNode::relocCheckCB, this, std::placeholders::_1, std::placeholders::_2));
 
         m_map_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("map_cloud", 10);
+	//*********** PALO
+	m_global_odom_pub = this->create_publisher<nav_msgs::msg::Odometry>("global_odom", 10);
+	m_tracking_valid_pub = this->create_publisher<std_msgs::msg::Bool>("tracking_valid", 10);
+	//***********
 
         m_timer = this->create_wall_timer(10ms, std::bind(&LocalizerNode::timerCB, this));
     }
@@ -146,6 +165,8 @@ public:
         }
 
         bool result = m_localizer->align(initial_guess);
+	//********************** PALO
+	/*
         if (result)
         {
             M3D map_body_r = initial_guess.block<3, 3>(0, 0).cast<double>();
@@ -159,6 +180,66 @@ public:
                 m_state.service_received = false;
             }
         }
+	*/
+	if (result)
+        {
+            const M3D map_body_r =
+                initial_guess.block<3, 3>(0, 0).cast<double>();
+        
+            const V3D map_body_t =
+                initial_guess.block<3, 1>(0, 3).cast<double>();
+        
+            {
+                std::lock_guard<std::mutex> lock(m_state.message_mutex);
+        
+                m_state.last_offset_r =
+                    map_body_r * current_local_r.transpose();
+        
+                m_state.last_offset_t =
+                    -map_body_r * current_local_r.transpose()
+                    * current_local_t
+                    + map_body_t;
+            }
+        
+            if (!m_state.localize_success.load()
+                && m_state.service_received.load())
+            {
+                m_state.localize_success.store(true);
+                m_state.service_received.store(false);
+        
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "Global odometry publishing enabled");
+            }
+
+            m_state.localize_success.store(true);
+            m_state.tracking_valid.store(true);
+            m_state.consecutive_icp_failures = 0;
+            m_state.last_icp_success_time = this->now();
+	    publishTrackingStatus();
+        }
+	else if (m_state.localize_success.load())
+        {
+            ++m_state.consecutive_icp_failures;
+        
+            const double seconds_since_success =
+                (this->now() - m_state.last_icp_success_time).seconds();
+        
+            if (m_state.consecutive_icp_failures >= 3
+                || seconds_since_success > 5.0)
+            {
+                m_state.tracking_valid.store(false);
+		publishTrackingStatus();
+        
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Localization tracking lost: %d consecutive ICP failures, "
+                    "%.1f seconds since last successful correction",
+                    m_state.consecutive_icp_failures,
+                    seconds_since_success);
+            }
+        }
+	//**************************
         sendBroadCastTF(current_time);
         publishMapCloud(current_time);
     }
@@ -183,6 +264,9 @@ public:
             m_state.message_received = true;
             m_config.local_frame = odom_msg->header.frame_id;
         }
+	//************* PALO
+	publishGlobalOdom(odom_msg);
+	//*************
     }
 
     void sendBroadCastTF(builtin_interfaces::msg::Time &time)
@@ -230,6 +314,8 @@ public:
             response->message = "load map failed";
             return;
         }
+	//**************** PALO
+	/*
         {
             std::lock_guard<std::mutex>(m_state.message_mutex);
             m_state.initial_guess.setIdentity();
@@ -238,6 +324,28 @@ public:
             m_state.service_received = true;
             m_state.localize_success = false;
         }
+	*/
+	{
+            std::lock_guard<std::mutex> lock(m_state.service_mutex);
+        
+            m_state.initial_guess.setIdentity();
+        
+            m_state.initial_guess.block<3, 3>(0, 0) =
+                (yaw_angle * roll_angle * pitch_angle)
+                    .toRotationMatrix()
+                    .cast<float>();
+        
+            m_state.initial_guess.block<3, 1>(0, 3) =
+                V3F(x, y, z);
+        
+	    // A new localization attempt starts now.
+            m_state.localize_success.store(false);
+            m_state.tracking_valid.store(false);
+	    publishTrackingStatus();
+            m_state.consecutive_icp_failures = 0;
+            m_state.service_received.store(true);
+        }
+	//***************
 
         response->success = true;
         response->message = "relocalize success";
@@ -246,11 +354,17 @@ public:
 
     void relocCheckCB(const std::shared_ptr<interface::srv::IsValid::Request> request, std::shared_ptr<interface::srv::IsValid::Response> response)
     {
-        std::lock_guard<std::mutex>(m_state.service_mutex);
+	//********** PALO
+	// unnecessary here because tracking_valid is atomic:
+        // std::lock_guard<std::mutex>(m_state.service_mutex);
+	//**********
         if (request->code == 1)
             response->valid = true;
         else
-            response->valid = m_state.localize_success;
+	    //********** PALO
+            //response->valid = m_state.localize_success;
+	    response->valid = m_state.tracking_valid.load();
+	    //**********
         return;
     }
     void publishMapCloud(builtin_interfaces::msg::Time &time)
@@ -267,6 +381,61 @@ public:
         m_map_cloud_pub->publish(map_cloud_msg);
     }
 
+    //********* PALO
+    void publishGlobalOdom(const nav_msgs::msg::Odometry::ConstSharedPtr &local_odom_msg)
+    {
+        // Do not claim that a map-relative pose exists before the first
+        // successful localization.
+        if (!m_state.localize_success.load())
+            return;
+    
+        // This function is called while message_mutex is held, so the latest
+        // map-to-local correction cannot change while the pose is assembled.
+        const M3D map_body_r =
+            m_state.last_offset_r * m_state.last_r;
+    
+        const V3D map_body_t =
+            m_state.last_offset_r * m_state.last_t
+            + m_state.last_offset_t;
+    
+        nav_msgs::msg::Odometry global_odom_msg;
+    
+        global_odom_msg.header.stamp = local_odom_msg->header.stamp;
+        global_odom_msg.header.frame_id = m_config.map_frame;
+        global_odom_msg.child_frame_id = local_odom_msg->child_frame_id;
+    
+        global_odom_msg.pose.pose.position.x = map_body_t.x();
+        global_odom_msg.pose.pose.position.y = map_body_t.y();
+        global_odom_msg.pose.pose.position.z = map_body_t.z();
+    
+        Eigen::Quaterniond q(map_body_r);
+        q.normalize();
+    
+        global_odom_msg.pose.pose.orientation.x = q.x();
+        global_odom_msg.pose.pose.orientation.y = q.y();
+        global_odom_msg.pose.pose.orientation.z = q.z();
+        global_odom_msg.pose.pose.orientation.w = q.w();
+    
+        // The twist is normally expressed in child_frame_id, which has not
+        // changed, so it can be copied directly.
+        global_odom_msg.twist = local_odom_msg->twist;
+    
+        // Keep the original covariance as a first approximation.
+        // A rigorous map-frame covariance transformation can be added later.
+        global_odom_msg.pose.covariance =
+            local_odom_msg->pose.covariance;
+    
+        m_global_odom_pub->publish(global_odom_msg);
+    }
+
+    void publishTrackingStatus()
+    {
+        std_msgs::msg::Bool msg;
+        msg.data = m_state.tracking_valid.load();
+        m_tracking_valid_pub->publish(msg);
+    }
+    //******************
+
 private:
     NodeConfig m_config;
     NodeState m_state;
@@ -281,6 +450,8 @@ private:
     rclcpp::Service<interface::srv::Relocalize>::SharedPtr m_reloc_srv;
     rclcpp::Service<interface::srv::IsValid>::SharedPtr m_reloc_check_srv;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_map_cloud_pub;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr m_global_odom_pub;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr m_tracking_valid_pub;
 };
 int main(int argc, char **argv)
 {
