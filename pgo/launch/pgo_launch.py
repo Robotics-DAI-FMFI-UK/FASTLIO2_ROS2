@@ -2,6 +2,9 @@ import launch
 import launch_ros.actions
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     rviz_cfg = PathJoinSubstitution(
@@ -18,6 +21,11 @@ def generate_launch_description():
 
     return launch.LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "rviz",
+                default_value="true",
+                description="Start RViz"
+            ),
             launch_ros.actions.Node(
                 package="fastlio2",
                 namespace="fastlio2",
@@ -41,6 +49,9 @@ def generate_launch_description():
                 name="rviz2",
                 output="screen",
                 arguments=["-d", rviz_cfg.perform(launch.LaunchContext())],
+                condition=IfCondition(
+                    LaunchConfiguration("rviz")
+                ),
             )
         ]
     )
