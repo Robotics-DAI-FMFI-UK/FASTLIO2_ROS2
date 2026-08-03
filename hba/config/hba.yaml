@@ -1,4 +1,5 @@
-scan_resolution: 0.1
+#scan_resolution: 0.1
+scan_resolution: 0.05
 
 window_size: 20
 stride: 10
