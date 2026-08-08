@@ -4,6 +4,7 @@
 #include <memory>
 #include <iostream>
 #include <chrono>
+#include <limits>
 // #include <filesystem>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -23,6 +24,8 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <yaml-cpp/yaml.h>
 
 using namespace std::chrono_literals;
@@ -74,6 +77,12 @@ public:
         m_world_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("world_cloud", 10000);
         m_path_pub = this->create_publisher<nav_msgs::msg::Path>("lio_path", 10000);
         m_odom_pub = this->create_publisher<nav_msgs::msg::Odometry>("lio_odom", 10000);
+        m_scan_diagnostics_pub = this->create_publisher<std_msgs::msg::Float64MultiArray>("scan_diagnostics", 1000);
+        m_iteration_diagnostics_pub = this->create_publisher<std_msgs::msg::Float64MultiArray>("iteration_diagnostics", 5000);
+        m_diagnostic_correspondences_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("diagnostic_correspondences", 10);
+        auto schema_qos = rclcpp::QoS(1).reliable().transient_local();
+        m_scan_diagnostics_schema_pub = this->create_publisher<std_msgs::msg::String>("scan_diagnostics_schema", schema_qos);
+        m_iteration_diagnostics_schema_pub = this->create_publisher<std_msgs::msg::String>("iteration_diagnostics_schema", schema_qos);
         m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
         m_state_data.path.poses.clear();
@@ -81,6 +90,17 @@ public:
 
         m_kf = std::make_shared<IESKF>();
         m_builder = std::make_shared<MapBuilder>(m_builder_config, m_kf);
+        if (m_builder_config.diagnostics_enabled)
+        {
+            std_msgs::msg::String scan_schema;
+            scan_schema.data = LidarProcessor::scanDiagnosticsSchema();
+            m_scan_diagnostics_schema_pub->publish(scan_schema);
+            std_msgs::msg::String iteration_schema;
+            iteration_schema.data = LidarProcessor::iterationDiagnosticsSchema();
+            m_iteration_diagnostics_schema_pub->publish(iteration_schema);
+            RCLCPP_INFO(this->get_logger(),
+                        "Passive diagnostics enabled: scan_diagnostics, iteration_diagnostics, diagnostic_correspondences");
+        }
         m_timer = this->create_wall_timer(20ms, std::bind(&LIONode::timerCB, this));
     }
 
@@ -128,6 +148,12 @@ public:
         m_builder_config.t_il << t_il_vec[0], t_il_vec[1], t_il_vec[2];
         m_builder_config.r_il << r_il_vec[0], r_il_vec[1], r_il_vec[2], r_il_vec[3], r_il_vec[4], r_il_vec[5], r_il_vec[6], r_il_vec[7], r_il_vec[8];
         m_builder_config.lidar_cov_inv = config["lidar_cov_inv"].as<double>();
+        m_builder_config.diagnostics_enabled = config["diagnostics_enabled"] ?
+            config["diagnostics_enabled"].as<bool>() : false;
+        m_builder_config.diagnostics_console = config["diagnostics_console"] ?
+            config["diagnostics_console"].as<bool>() : false;
+        m_builder_config.diagnostic_cloud_hz = config["diagnostic_cloud_hz"] ?
+            config["diagnostic_cloud_hz"].as<double>() : 2.0;
     }
 
     void imuCB(const sensor_msgs::msg::Imu::SharedPtr msg)
@@ -310,6 +336,8 @@ public:
         if (m_builder->status() != BuilderStatus::MAPPING)
             return;
 
+        publishDiagnostics();
+
         broadCastTF(m_tf_broadcaster, m_node_config.world_frame, m_node_config.body_frame, m_package.cloud_end_time);
 
         publishOdometry(m_odom_pub, m_node_config.world_frame, m_node_config.body_frame, m_package.cloud_end_time);
@@ -325,6 +353,54 @@ public:
         publishPath(m_path_pub, m_node_config.world_frame, m_package.cloud_end_time);
     }
 
+    void publishDiagnostics()
+    {
+        auto lidar_processor = m_builder->lidar_processor();
+        if (!lidar_processor->diagnosticsEnabled())
+            return;
+
+        const auto &scan = lidar_processor->scanDiagnostics().values;
+        if (!scan.empty())
+        {
+            std_msgs::msg::Float64MultiArray message;
+            message.data = scan;
+            m_scan_diagnostics_pub->publish(message);
+        }
+
+        for (const auto &iteration : lidar_processor->iterationDiagnostics())
+        {
+            std_msgs::msg::Float64MultiArray message;
+            message.data = iteration.values;
+            m_iteration_diagnostics_pub->publish(message);
+        }
+
+        const auto &iterations = lidar_processor->iterationDiagnostics();
+        if (m_builder_config.diagnostics_console && !scan.empty() && !iterations.empty())
+        {
+            const auto &last = iterations.back().values;
+            RCLCPP_INFO(this->get_logger(),
+                        "FASTLIO_DIAG scan=%.0f iter=%.0f input=%.0f effective=%.0f "
+                        "reject=[missing %.0f far %.0f plane %.0f score %.0f] "
+                        "normals=[horizontal %.0f vertical %.0f oblique %.0f] "
+                        "residual_p90=%.4f info_min=%.3e condition=%.3e "
+                        "z=%.3f->%.3f dz=%.3f map=%.0f->%.0f",
+                        scan[0], scan[11], last[2], last[6], last[7], last[8], last[9], last[10],
+                        last[23], last[24], last[25], last[18], last[29], last[31],
+                        scan[15], scan[18], scan[21], scan[4], scan[6]);
+        }
+
+        const double cloud_period = m_builder_config.diagnostic_cloud_hz > 0.0 ?
+            1.0 / m_builder_config.diagnostic_cloud_hz : std::numeric_limits<double>::infinity();
+        if (m_package.cloud_end_time - m_last_diagnostic_cloud_time >= cloud_period)
+        {
+            publishCloud(m_diagnostic_correspondences_pub,
+                         lidar_processor->diagnosticCorrespondences(),
+                         m_node_config.world_frame,
+                         m_package.cloud_end_time);
+            m_last_diagnostic_cloud_time = m_package.cloud_end_time;
+        }
+    }
+
 private:
     //********** PALO
     //rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr m_lidar_sub;
@@ -337,6 +413,11 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_world_cloud_pub;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr m_path_pub;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr m_odom_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr m_scan_diagnostics_pub;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr m_iteration_diagnostics_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_diagnostic_correspondences_pub;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr m_scan_diagnostics_schema_pub;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr m_iteration_diagnostics_schema_pub;
 
     rclcpp::TimerBase::SharedPtr m_timer;
     StateData m_state_data;
@@ -346,6 +427,7 @@ private:
     std::shared_ptr<IESKF> m_kf;
     std::shared_ptr<MapBuilder> m_builder;
     std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
+    double m_last_diagnostic_cloud_time = -std::numeric_limits<double>::infinity();
 };
 
 int main(int argc, char **argv)
