@@ -45,4 +45,7 @@ private:
     CloudType::Ptr m_effect_norm_vec;
     std::vector<PointVec> m_nearest_points;
     pcl::VoxelGrid<PointType> m_scan_filter;
+    bool m_level_z_reference_initialized = false;
+    double m_level_z_reference = 0.0;
+    size_t m_level_z_rejection_count = 0;
 };

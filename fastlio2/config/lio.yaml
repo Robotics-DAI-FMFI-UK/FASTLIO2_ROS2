@@ -37,3 +37,13 @@ r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 t_il: [-0.011, -0.02329, 0.04412]
 
 lidar_cov_inv: 1000.0
+
+# Single-floor mapping safety fence. The reference Z is learned when normal
+# scan-to-map processing starts. If a LiDAR correction leaves this band or
+# proposes too large a vertical correction in one scan, the complete LiDAR
+# update is rolled back to the IMU-predicted state and the scan is not added
+# to the local map. Disable this before mapping stairs, ramps, or multiple
+# floors.
+level_z_fence_enabled: true
+level_z_fence_absolute_limit: 0.20
+level_z_fence_update_limit: 0.08

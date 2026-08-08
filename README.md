@@ -110,3 +110,22 @@ ros2 service call /hba/refine_map interface/srv/RefineMap "{"maps_path": "your m
 ## 性能相关的问题
 该代码主要使用timerCB作为频率触发主函数，由于ROS2中的timer、subscriber以及service的回调实际上运行在同一个线程上，在电脑性能不是好的时候，会出现调用阻塞的情况，建议使用线程并发的方式将耗时的回调独立出来(如timerCB)来提升性能
 
+## Optional single-floor Z fence
+
+For mapping a nominally level floor, `fastlio2/config/lio.yaml` can enable a
+small safety fence around the LiDAR's initial world-frame Z coordinate:
+
+```yaml
+level_z_fence_enabled: true
+level_z_fence_absolute_limit: 0.20
+level_z_fence_update_limit: 0.08
+```
+
+The filter keeps the state and covariance after IMU propagation, performs the
+normal iterative LiDAR update, and checks the resulting Z position. If the
+candidate leaves the absolute band or proposes too large a Z correction in one
+scan, the complete LiDAR update is rolled back to the IMU-predicted state. The
+rejected scan is not inserted into the local map.
+
+This is deliberately a single-level mapping safeguard. Disable it before
+mapping stairs, ramps, elevators, or multiple floors.

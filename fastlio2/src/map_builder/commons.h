@@ -52,6 +52,13 @@ struct Config
     V3D t_il = V3D::Zero();
 
     double lidar_cov_inv = 1000.0;
+
+    // Optional safety fence for mapping a single, nominally level floor.
+    // A rejected LiDAR update is rolled back to the IMU-predicted state and
+    // its scan is not inserted into the local map.
+    bool level_z_fence_enabled = false;
+    double level_z_fence_absolute_limit = 0.20;
+    double level_z_fence_update_limit = 0.08;
 };
 
 struct IMUData

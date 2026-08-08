@@ -1,5 +1,8 @@
 #include "lidar_processor.h"
 
+#include <cmath>
+#include <iostream>
+
 LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf)
 {
     m_ikdtree = std::make_shared<KD_TREE<PointType>>();
@@ -168,7 +171,55 @@ void LidarProcessor::process(SyncPackage &package)
         pcl::copyPointCloud(*package.cloud, *m_cloud_down_lidar);
     }
     trimCloudMap();
+
+    // IMUProcessor::undistort() has already propagated the filter to this
+    // scan's time. Keep that prediction so a suspicious LiDAR correction can
+    // be rejected without rolling time backwards.
+    const State predicted_state = m_kf->x();
+    const M21D predicted_covariance = m_kf->P();
+
+    if (m_config.level_z_fence_enabled && !m_level_z_reference_initialized)
+    {
+        m_level_z_reference = predicted_state.t_wi.z();
+        m_level_z_reference_initialized = true;
+        std::cout << "[FAST-LIO] Single-floor Z reference initialized at "
+                  << m_level_z_reference << " m" << std::endl;
+    }
+
     m_kf->update();
+
+    if (m_config.level_z_fence_enabled)
+    {
+        const double candidate_z = m_kf->x().t_wi.z();
+        const double absolute_error = std::fabs(candidate_z - m_level_z_reference);
+        const double update_correction = std::fabs(candidate_z - predicted_state.t_wi.z());
+
+        const bool absolute_z_ok = absolute_error <= m_config.level_z_fence_absolute_limit;
+        const bool update_z_ok = update_correction <= m_config.level_z_fence_update_limit;
+
+        if (!absolute_z_ok || !update_z_ok)
+        {
+            m_kf->x() = predicted_state;
+            m_kf->P() = predicted_covariance;
+            ++m_level_z_rejection_count;
+
+            // The rejected scan is deliberately not inserted into the map.
+            // Print the first few events and then periodically to avoid
+            // flooding the console if bad geometry persists.
+            if (m_level_z_rejection_count <= 5 || m_level_z_rejection_count % 10 == 0)
+            {
+                std::cerr << "[FAST-LIO] Rejected LiDAR update by single-floor Z fence: "
+                          << "candidate_z=" << candidate_z
+                          << " reference_z=" << m_level_z_reference
+                          << " absolute_error=" << absolute_error
+                          << " update_correction=" << update_correction
+                          << " rejection_count=" << m_level_z_rejection_count
+                          << std::endl;
+            }
+            return;
+        }
+    }
+
     incrCloudMap();
 }
 
