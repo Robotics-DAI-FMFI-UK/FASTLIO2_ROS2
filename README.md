@@ -110,3 +110,31 @@ ros2 service call /hba/refine_map interface/srv/RefineMap "{"maps_path": "your m
 ## 性能相关的问题
 该代码主要使用timerCB作为频率触发主函数，由于ROS2中的timer、subscriber以及service的回调实际上运行在同一个线程上，在电脑性能不是好的时候，会出现调用阻塞的情况，建议使用线程并发的方式将耗时的回调独立出来(如timerCB)来提升性能
 
+## FAST-LIO registration diagnostics
+
+The G1 configuration enables passive scan-to-map diagnostics. The diagnostics do not change filtering, correspondence selection, the IESKF update, or map insertion.
+
+Published topics:
+
+- `/fastlio2/scan_diagnostics` (`std_msgs/msg/Float64MultiArray`): one estimator summary per LiDAR scan, including the IMU-predicted and corrected state, covariance, map size, map movement, and insertion counts.
+- `/fastlio2/iteration_diagnostics` (`std_msgs/msg/Float64MultiArray`): one summary for every IESKF correspondence iteration, including each rejection stage, neighbor distance, residual distribution, plane-normal distribution, range/height bins, and information-matrix eigenvalues.
+- `/fastlio2/diagnostic_correspondences` (`sensor_msgs/msg/PointCloud2`): all downsampled world-frame correspondence candidates from the final iteration, throttled by `diagnostic_cloud_hz`. `curvature` contains the rejection stage (`0` accepted, `1` missing neighbors, `2` neighbors too far, `3` plane fit failed, `4` residual score rejected). `intensity` is the signed point-to-plane residual when available and `normal_x/y/z` is the fitted world-frame plane normal.
+- `/fastlio2/scan_diagnostics_schema` and `/fastlio2/iteration_diagnostics_schema` (`std_msgs/msg/String`): comma-separated field names in array order, published with transient-local durability.
+
+For a focused failure run, record only the compact diagnostic output plus odometry and IMU:
+
+```shell
+ros2 bag record -o ~/bags/fastlio_corner_diagnostics \
+  /fastlio2/scan_diagnostics \
+  /fastlio2/iteration_diagnostics \
+  /fastlio2/diagnostic_correspondences \
+  /fastlio2/scan_diagnostics_schema \
+  /fastlio2/iteration_diagnostics_schema \
+  /fastlio2/lio_odom \
+  /dog_odom \
+  /utlidar/imu_livox_mid360
+```
+
+At 2 Hz the correspondence cloud is much smaller than recording every raw Mid-360 scan. Set `diagnostics_enabled: false` after the experiment to remove the diagnostic computation, or set `diagnostic_cloud_hz: 0.0` to disable only the cloud.
+
+`diagnostics_console: true` also prints one compact `FASTLIO_DIAG` line per scan. The bag topics remain the authoritative machine-readable record.

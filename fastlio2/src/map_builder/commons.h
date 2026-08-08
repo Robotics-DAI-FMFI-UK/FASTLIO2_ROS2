@@ -52,6 +52,11 @@ struct Config
     V3D t_il = V3D::Zero();
 
     double lidar_cov_inv = 1000.0;
+
+    // Passive diagnostics only; these options must not change estimation.
+    bool diagnostics_enabled = false;
+    bool diagnostics_console = false;
+    double diagnostic_cloud_hz = 2.0;
 };
 
 struct IMUData

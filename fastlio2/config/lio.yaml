@@ -9,6 +9,11 @@ body_frame: body
 world_frame: lidar
 print_time_cost: false
 
+# Passive estimator diagnostics. These do not alter matching or state updates.
+diagnostics_enabled: true
+diagnostics_console: true
+diagnostic_cloud_hz: 2.0
+
 #lidar_filter_num: 6
 lidar_filter_num: 3
 #lidar_min_range: 0.5
