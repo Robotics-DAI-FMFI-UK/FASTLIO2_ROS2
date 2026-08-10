@@ -5,7 +5,20 @@ Install and run instructions on G1-Edu robot (Ubuntu 20/Foxy)
 Installing
 ==========
 
-Make sure you alway source the Foxy setup from .bashrc or in some other way:
+Our G1 came already preinstalled with foxy and build system, if not, you may need to do the following,
+otherwise, just skip it:
+
+sudo apt update
+sudo apt install \
+    build-essential cmake git \
+    libpcl-dev libeigen3-dev libyaml-cpp-dev \
+    ros-foxy-pcl-conversions \
+    ros-foxy-message-filters \
+    ros-foxy-tf2-ros \
+    ros-foxy-rviz2
+
+
+Make sure you always source the Foxy setup from .bashrc or in some other way:
 
  source /opt/ros/foxy/setup.bash
 
@@ -54,7 +67,7 @@ We assume that the system will be cloned/installed under ~/s
 Do not run sudo make install; their CMake build directories will be supplied explicitly during the ROS package builds.
 
 
-5. make the livox ros2 driver available:
+5. make the Unitree Mid-360 ROS topics and workspace available:
 
  source /unitree/module/graph_pid_ws/install/setup.bash
 
@@ -105,7 +118,7 @@ Running
  export LD_LIBRARY_PATH="$HOME/s/gtsam/build/gtsam:$LD_LIBRARY_PATH"
  ros2 launch pgo pgo_launch.py
 
-from another terminal when mapping is finished, save the map (replace your_map_folder for yours):
+from another terminal when mapping is finished, save the map (replace your_map_folder for your chosen folder):
 
  cd ~/s/FASTLIO2_ROS2
  source /unitree/module/graph_pid_ws/install/setup.bash
@@ -114,6 +127,17 @@ from another terminal when mapping is finished, save the map (replace your_map_f
  ros2 service call /pgo/save_maps \
    interface/srv/SaveMaps \
    "{file_path: '/home/unitree/s/maps/your_map_folder', save_patches: true}"
+
+save_patches: true is required only if the map will later be processed
+with HBA. For ordinary mapping and localization, save_patches: false is
+sufficient and uses substantially less storage.
+
+alternately, to start mapping in headless mode (without RVIZ and possibly disconnecting from your terminal/wifi):
+
+ nohup ros2 launch pgo pgo_launch.py rviz:=false ~/s/pgo_mapping.log 2>&1 < /dev/null &
+ echo $! > ~/s/pgo_mapping.pid
+ disown
+
 
 2. localization
 
@@ -139,6 +163,11 @@ or if you only want to load the map and start localization without using the loc
     yaw: 0.0,
     pitch: 3.14159265,
     roll: 0.0}"
+
+The zero x, y, z and yaw initial guess is suitable only when the robot
+starts close to the mapping origin and with approximately the original
+heading. At another starting location, provide an approximate map pose.
+ICP is a local optimizer and does not perform global place recognition.
 
 to check the localization status:
 
