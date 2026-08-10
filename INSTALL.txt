@@ -1,0 +1,147 @@
+Install and run instructions on G1-Edu robot (Ubuntu 20/Foxy)
+=====================================================
+
+
+Installing
+==========
+
+Make sure you alway source the Foxy setup from .bashrc or in some other way:
+
+ source /opt/ros/foxy/setup.bash
+
+We assume that the system will be cloned/installed under ~/s
+
+
+1. clone the repository
+
+ cd ~/s
+ git clone https://github.com/Robotics-DAI-FMFI-UK/FASTLIO2_ROS2.git
+
+
+2. verify libpcl and libeigen are installed:
+
+ sudo apt install libpcl-dev libeigen3-dev
+
+
+3. clone and build GTSAM 4.1.1
+
+ cd ~/s 
+ git clone --branch 4.1.1 --depth 1 https://github.com/borglab/gtsam.git gtsam
+ cd gtsam
+ mkdir -p build
+ cd build
+ cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DGTSAM_BUILD_TESTS=OFF \
+    -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
+    -DGTSAM_BUILD_UNSTABLE=OFF \
+    -DGTSAM_BUILD_PYTHON=OFF
+ make
+
+ Do not run sudo make install; their CMake build directories will be supplied explicitly during the ROS package builds.
+
+
+4. clone and build Sophus 1.22.10
+
+ cd ~/s
+ git clone https://github.com/strasdat/Sophus.git
+ cd Sophus
+ git checkout 1.22.10
+ mkdir build && cd build
+ cmake .. -DSOPHUS_USE_BASIC_LOGGING=ON
+ make
+
+Do not run sudo make install; their CMake build directories will be supplied explicitly during the ROS package builds.
+
+
+5. make the livox ros2 driver available:
+
+ source /unitree/module/graph_pid_ws/install/setup.bash
+
+
+6. build the packages
+
+ cd ~/s/FASTLIO2_ROS2
+ export LD_LIBRARY_PATH="$HOME/s/gtsam/build/gtsam:$LD_LIBRARY_PATH"
+ colcon build \
+    --packages-select interface fastlio2 \
+    --symlink-install \
+    --event-handlers console_direct+ \
+    --cmake-clean-cache \
+    --cmake-args \
+        -DSophus_DIR="$HOME/s/Sophus/build"
+ source install/setup.bash
+ colcon build \
+    --packages-select pgo \
+    --symlink-install \
+    --event-handlers console_direct+ \
+    --cmake-clean-cache \
+    --cmake-args \
+        -DGTSAM_DIR="$HOME/s/gtsam/build"
+ colcon build \
+    --packages-select localizer \
+    --symlink-install \
+    --event-handlers console_direct+ \
+    --cmake-args \
+        -DGTSAM_DIR="$HOME/s/gtsam/build" \
+        -DSophus_DIR="$HOME/s/Sophus/build"
+ colcon build \
+    --packages-select hba \
+    --symlink-install \
+    --event-handlers console_direct+ \
+    --cmake-args \
+        -DGTSAM_DIR="$HOME/s/gtsam/build" \
+        -DSophus_DIR="$HOME/s/Sophus/build"
+
+
+Running
+=======
+
+1. mapping
+
+ cd ~/s/FASTLIO2_ROS2
+ source /unitree/module/graph_pid_ws/install/setup.bash
+ source install/setup.bash
+ export LD_LIBRARY_PATH="$HOME/s/gtsam/build/gtsam:$LD_LIBRARY_PATH"
+ ros2 launch pgo pgo_launch.py
+
+from another terminal when mapping is finished, save the map (replace your_map_folder for yours):
+
+ cd ~/s/FASTLIO2_ROS2
+ source /unitree/module/graph_pid_ws/install/setup.bash
+ source install/setup.bash
+ mkdir -p /home/unitree/s/maps/your_map_folder
+ ros2 service call /pgo/save_maps \
+   interface/srv/SaveMaps \
+   "{file_path: '/home/unitree/s/maps/your_map_folder', save_patches: true}"
+
+2. localization
+
+ cd ~/s/FASTLIO2_ROS2
+ source /unitree/module/graph_pid_ws/install/setup.bash
+ source install/setup.bash
+ ros2 launch localizer localizer_launch.py
+
+from another terminal to load the map and watch the actual location in console:
+
+ cd ~/s/FASTLIO2_ROS2
+ source /unitree/module/graph_pid_ws/install/setup.bash
+ source install/setup.bash
+ ros2 run localizer localization_monitor /home/unitree/s/maps/your_map_folder/map.pcd
+
+or if you only want to load the map and start localization without using the localization_monitor utility:
+
+ ros2 service call /localizer/relocalize interface/srv/Relocalize \
+  "{pcd_path: '/home/unitree/s/maps/your_map_folder/map.pcd',
+    x: 0.0,
+    y: 0.0,
+    z: 0.0,
+    yaw: 0.0,
+    pitch: 3.14159265,
+    roll: 0.0}"
+
+to check the localization status:
+
+ ros2 service call /localizer/relocalize_check interface/srv/IsValid "{code: 0}"
+
+
